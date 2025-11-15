@@ -6,6 +6,10 @@ type AddFriendBody = {
   email: string;
 };
 
+type RemoveFriendBody = {
+  friendId: string;
+};
+
 export async function registerFriendRoutes(app: FastifyInstance) {
   // Add friend by email
   app.post<{ Body: AddFriendBody }>("/friends/add", async (request, reply) => {
@@ -91,4 +95,47 @@ export async function registerFriendRoutes(app: FastifyInstance) {
 
     return { friends };
   });
+  app.post<{ Body: RemoveFriendBody }>(
+    "/friends/remove",
+    async (request, reply) => {
+      const authReq = request as AuthenticatedRequest;
+      const user = authReq.user;
+
+      if (!user) {
+        return reply.status(401).send({ error: "unauthorized" });
+      }
+
+      const { friendId } = request.body;
+
+      if (!friendId) {
+        return reply
+          .status(400)
+          .send({ error: "Missing friendId in request body" });
+      }
+
+      if (friendId === user.id) {
+        return reply
+          .status(400)
+          .send({ error: "You cannot remove yourself as a friend" });
+      }
+
+      // delete both directions of the friendship if you store it that way
+      const result = await prisma.friend.deleteMany({
+        where: {
+          OR: [
+            { userId: user.id, friendId },
+            { userId: friendId, friendId: user.id },
+          ],
+        },
+      });
+
+      if (result.count === 0) {
+        return reply
+          .status(404)
+          .send({ error: "Friend relationship not found" });
+      }
+
+      return reply.send({ success: true });
+    }
+  );
 }
