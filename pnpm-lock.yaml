@@ -14,6 +14,9 @@ importers:
       fastify:
         specifier: ^5.6.2
         version: 5.6.2
+      jose:
+        specifier: ^6.1.1
+        version: 6.1.1
     devDependencies:
       '@types/node':
         specifier: ^24.10.1
@@ -338,6 +341,9 @@ packages:
   jiti@2.6.1:
     resolution: {integrity: sha512-ekilCSN1jwRvIbgeg/57YFh8qQDNbwDb9xT/qu2DAHbFFZUicIl4ygVaAvzveMhMVr3LnpSKTNnwt8PoOfmKhQ==}
     hasBin: true
+
+  jose@6.1.1:
+    resolution: {integrity: sha512-GWSqjfOPf4cWOkBzw5THBjtGPhXKqYnfRBzh4Ni+ArTrQQ9unvmsA3oFLqaYKoKe5sjWmGu5wVKg9Ft1i+LQfg==}
 
   json-schema-ref-resolver@3.0.0:
     resolution: {integrity: sha512-hOrZIVL5jyYFjzk7+y7n5JDzGlU8rfWDuYyHwGa2WA8/pcmMHezp2xsVwxrebD/Q9t8Nc5DboieySDpCp4WG4A==}
@@ -914,6 +920,8 @@ snapshots:
   is-number@7.0.0: {}
 
   jiti@2.6.1: {}
+
+  jose@6.1.1: {}
 
   json-schema-ref-resolver@3.0.0:
     dependencies:
