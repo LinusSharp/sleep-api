@@ -20,14 +20,40 @@ export async function registerLeaderboardRoutes(app: FastifyInstance) {
     }
     const userId = user.id;
 
-    const daysRaw = (request.query as any)?.days;
-    const days = daysRaw ? Number(daysRaw) : 7;
+    // --- CURRENT WORK WEEK WINDOW ---
+    // We treat dates Mon–Fri as the mornings for Sun–Thu nights.
+    const now = new Date();
+    const utcDay = now.getUTCDay(); // 0 = Sun, 1 = Mon, ... 6 = Sat
 
-    const from = new Date();
-    from.setUTCDate(from.getUTCDate() - (Number.isFinite(days) ? days : 7));
-    from.setUTCHours(0, 0, 0, 0);
+    // Find Monday (day 1) of this week at 00:00 UTC
+    // diffToMonday: 0 if Mon, 1 if Tue, ..., 6 if Sun
+    const diffToMonday = (utcDay + 6) % 7;
+    const mondayThisWeek = new Date(
+      Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate() - diffToMonday,
+        0,
+        0,
+        0,
+        0
+      )
+    );
 
-    // Find all friend ids
+    // Next Monday at 00:00 UTC
+    const nextMonday = new Date(
+      Date.UTC(
+        mondayThisWeek.getUTCFullYear(),
+        mondayThisWeek.getUTCMonth(),
+        mondayThisWeek.getUTCDate() + 7,
+        0,
+        0,
+        0,
+        0
+      )
+    );
+
+    // --- WHO IS INCLUDED? (YOU + FRIENDS) ---
     const relations = await prisma.friend.findMany({
       where: {
         OR: [{ userId }, { friendId: userId }],
@@ -37,8 +63,6 @@ export async function registerLeaderboardRoutes(app: FastifyInstance) {
     const friendIds = relations.map((rel) =>
       rel.userId === userId ? rel.friendId : rel.userId
     );
-
-    // Leaderboard is "me + friends"
     const userIds = Array.from(new Set([userId, ...friendIds]));
 
     if (userIds.length === 0) {
@@ -51,21 +75,24 @@ export async function registerLeaderboardRoutes(app: FastifyInstance) {
       };
     }
 
-    // All nights in range for these users
+    // --- FETCH NIGHTS ONLY FOR THIS WEEK ---
     const nights = await prisma.sleepNight.findMany({
       where: {
         userId: { in: userIds },
-        date: { gte: from },
+        date: {
+          gte: mondayThisWeek,
+          lt: nextMonday,
+        },
       },
     });
 
-    // Keep only work nights: Sunday (0) -> Thursday (4)
+    // Keep ONLY Mon–Fri dates -> which represent Sun–Thu nights
     const workNights = nights.filter((night) => {
-      const day = night.date.getUTCDay();
-      return day >= 0 && day <= 4;
+      const day = night.date.getUTCDay(); // 1..5 = Mon..Fri
+      return day >= 1 && day <= 5;
     });
 
-    // Aggregate per user
+    // --- AGGREGATE PER USER ---
     const statsByUserId = new Map<
       string,
       {
@@ -94,10 +121,9 @@ export async function registerLeaderboardRoutes(app: FastifyInstance) {
     const users = await prisma.user.findMany({
       where: { id: { in: userIds } },
     });
-
     const usersById = new Map(users.map((u) => [u.id, u]));
 
-    const baseRows: LeaderboardRow[] = userIds.map((id) => {
+    const rows: LeaderboardRow[] = userIds.map((id) => {
       const u = usersById.get(id);
       const stats = statsByUserId.get(id)!;
       return {
@@ -110,14 +136,20 @@ export async function registerLeaderboardRoutes(app: FastifyInstance) {
       };
     });
 
-    const survivalist = [...baseRows].sort(
-      (a, b) => (a.totalSleepMinutes ?? 0) - (b.totalSleepMinutes ?? 0)
+    // --- THREE LEADERBOARDS ---
+    // survivalist: least total sleep wins
+    const survivalist = [...rows].sort(
+      (a, b) => a.totalSleepMinutes - b.totalSleepMinutes
     );
-    const tomRemmer = [...baseRows].sort(
-      (a, b) => (b.remSleepMinutes ?? 0) - (a.remSleepMinutes ?? 0)
+
+    // tomRemmer: most REM
+    const tomRemmer = [...rows].sort(
+      (a, b) => b.remSleepMinutes - a.remSleepMinutes
     );
-    const rollingInTheDeep = [...baseRows].sort(
-      (a, b) => (b.deepSleepMinutes ?? 0) - (a.deepSleepMinutes ?? 0)
+
+    // rollingInTheDeep: most deep
+    const rollingInTheDeep = [...rows].sort(
+      (a, b) => b.deepSleepMinutes - a.deepSleepMinutes
     );
 
     return {
