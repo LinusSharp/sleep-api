@@ -2,6 +2,16 @@ import { FastifyInstance } from "fastify";
 import { prisma } from "../db/client";
 import type { AuthenticatedRequest } from "../server";
 
+// Helper to generate random 8-char alphanumeric code
+function generateGroupCode(length = 8): string {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  let result = "";
+  for (let i = 0; i < length; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
+
 export async function registerGroupRoutes(app: FastifyInstance) {
   // GET /groups/me - Get my current group details
   app.get("/groups/me", async (request, reply) => {
@@ -30,7 +40,7 @@ export async function registerGroupRoutes(app: FastifyInstance) {
     return { group: userData?.group || null };
   });
 
-  // POST /groups/create - Create a new clan
+  // POST /groups/create - Create a new clan with a random code
   app.post<{ Body: { name: string } }>(
     "/groups/create",
     async (request, reply) => {
@@ -42,7 +52,6 @@ export async function registerGroupRoutes(app: FastifyInstance) {
       if (!name || name.length < 3)
         return reply.status(400).send({ error: "Name too short" });
 
-      // Check if user is already in a group
       const currentUser = await prisma.user.findUnique({
         where: { id: user.id },
       });
@@ -52,10 +61,14 @@ export async function registerGroupRoutes(app: FastifyInstance) {
           .send({ error: "You are already in a clan. Leave it first." });
       }
 
+      // Generate a code and ensure uniqueness (simple retry logic could be added, but collision is rare for 8 chars)
+      const code = generateGroupCode();
+
       try {
         const group = await prisma.group.create({
           data: {
             name,
+            code, // <--- Save the generated code
             members: {
               connect: { id: user.id },
             },
@@ -65,7 +78,7 @@ export async function registerGroupRoutes(app: FastifyInstance) {
         return { group };
       } catch (e: any) {
         if (e.code === "P2002") {
-          // Prisma unique constraint error
+          // This error now catches duplicate Names OR duplicate Codes
           return reply.status(400).send({ error: "Clan name already taken" });
         }
         throw e;
@@ -73,18 +86,20 @@ export async function registerGroupRoutes(app: FastifyInstance) {
     }
   );
 
-  // POST /groups/join - Join existing clan by name
-  app.post<{ Body: { name: string } }>(
+  // POST /groups/join - Join clan by CODE
+  app.post<{ Body: { code: string } }>(
     "/groups/join",
     async (request, reply) => {
       const authReq = request as AuthenticatedRequest;
       const user = authReq.user;
       if (!user) return reply.status(401).send({ error: "unauthorized" });
 
-      const { name } = request.body;
+      const { code } = request.body; // <--- Expect 'code', not 'name'
 
-      const group = await prisma.group.findUnique({ where: { name } });
-      if (!group) return reply.status(404).send({ error: "Clan not found" });
+      // Find by code
+      const group = await prisma.group.findUnique({ where: { code } });
+
+      if (!group) return reply.status(404).send({ error: "Invalid clan code" });
 
       await prisma.user.update({
         where: { id: user.id },
@@ -105,8 +120,6 @@ export async function registerGroupRoutes(app: FastifyInstance) {
       where: { id: user.id },
       data: { groupId: null },
     });
-
-    // Optional: Delete group if empty? Not implemented for simplicity
 
     return { success: true };
   });

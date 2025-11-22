@@ -55,6 +55,7 @@ model Friend {
 model Group {
   id        String   @id @default(uuid()) @db.Uuid
   name      String   @unique
+  code      String   @unique
   createdAt DateTime @default(now())
 
   // Members relation back to User
