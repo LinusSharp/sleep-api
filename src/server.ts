@@ -3,6 +3,7 @@ import { registerSleepRoutes } from "./routes/sleep";
 import { registerFriendRoutes } from "./routes/friends";
 import { registerLeaderboardRoutes } from "./routes/leaderboard";
 import { registerMeRoutes } from "./routes/me";
+import { registerGroupRoutes } from "./routes/groups"; // <--- Add this
 import { verifySupabaseToken } from "./auth/verifyJwt";
 
 export interface AuthenticatedRequest extends FastifyRequest {
@@ -14,15 +15,18 @@ export function buildServer(): FastifyInstance {
 
   app.get("/health", async () => ({ ok: true }));
 
-  // Auth hook for all /me, /friends, /sleep, /leaderboard
   app.addHook("preHandler", async (request, reply) => {
     const url = request.raw.url || "";
+    // Add /groups to the allowlist
     if (
       !(
-        url.startsWith("/sleep") ||
-        url.startsWith("/friends") ||
-        url.startsWith("/leaderboard") ||
-        url.startsWith("/me")
+        (
+          url.startsWith("/sleep") ||
+          url.startsWith("/friends") ||
+          url.startsWith("/leaderboard") ||
+          url.startsWith("/me") ||
+          url.startsWith("/groups")
+        ) // <--- Add this
       )
     ) {
       return;
@@ -48,6 +52,7 @@ export function buildServer(): FastifyInstance {
   registerSleepRoutes(app);
   registerFriendRoutes(app);
   registerLeaderboardRoutes(app);
+  registerGroupRoutes(app); // <--- Add this
 
   return app;
 }

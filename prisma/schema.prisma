@@ -8,14 +8,22 @@ datasource db {
 }
 
 model User {
-  id          String       @id @db.Uuid
+  id          String   @id @db.Uuid
   displayName String?
   avatarUrl   String?
-  createdAt   DateTime     @default(now())
-  email       String?      @unique
-  friendOf    Friend[]     @relation("FriendUsers")
-  friends     Friend[]     @relation("UserFriends")
+  createdAt   DateTime @default(now())
+  email       String?  @unique
+
+  // Friends relations
+  friendOf Friend[] @relation("FriendUsers")
+  friends  Friend[] @relation("UserFriends")
+
+  // Sleep Data
   sleepNights SleepNight[]
+
+  // --- FIX: Clan/Group Relation goes here ---
+  groupId String? @db.Uuid
+  group   Group?  @relation(fields: [groupId], references: [id])
 }
 
 model SleepNight {
@@ -39,6 +47,16 @@ model Friend {
   createdAt DateTime @default(now())
   friend    User     @relation("FriendUsers", fields: [friendId], references: [id])
   user      User     @relation("UserFriends", fields: [userId], references: [id])
+  // --- REMOVED GROUP FIELDS FROM HERE ---
 
   @@unique([userId, friendId])
+}
+
+model Group {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique
+  createdAt DateTime @default(now())
+
+  // Members relation back to User
+  members User[]
 }
