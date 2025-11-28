@@ -21,9 +21,13 @@ model User {
   // Sleep Data
   sleepNights SleepNight[]
 
-  // --- FIX: Clan/Group Relation goes here ---
+  // Clan/Group Relation
   groupId String? @db.Uuid
   group   Group?  @relation(fields: [groupId], references: [id])
+
+  // --- NEW: Opposite relations added here ---
+  weeklyWinners    WeeklyWinner[]
+  achievements     UserAchievement[]
 }
 
 model SleepNight {
@@ -47,7 +51,6 @@ model Friend {
   createdAt DateTime @default(now())
   friend    User     @relation("FriendUsers", fields: [friendId], references: [id])
   user      User     @relation("UserFriends", fields: [userId], references: [id])
-  // --- REMOVED GROUP FIELDS FROM HERE ---
 
   @@unique([userId, friendId])
 }
@@ -60,4 +63,48 @@ model Group {
 
   // Members relation back to User
   members User[]
+
+  // --- NEW: Opposite relation added here ---
+  weeklyWinners WeeklyWinner[]
+}
+
+// Store who won the leaderboard each week
+model WeeklyWinner {
+  id        String   @id @default(uuid()) @db.Uuid
+  weekStart DateTime // The Monday of that week
+  userId    String   @db.Uuid
+  groupId   String?  @db.Uuid // Optional: if it was a clan internal win
+  category  String   // "survivalist", "hibernator", etc.
+  rank      Int      // 1, 2, 3
+  score     Int      // Points or Minutes scored
+  
+  user      User     @relation(fields: [userId], references: [id])
+  group     Group?   @relation(fields: [groupId], references: [id])
+
+  @@unique([weekStart, category, rank, groupId]) 
+}
+
+// Define available badges (e.g., "100 Hours Club")
+model Achievement {
+  id          String   @id @default(uuid()) @db.Uuid
+  code        String   @unique // e.g. "SLEEP_100"
+  name        String
+  description String
+  icon        String   // Ionicons name
+  targetValue Int      // e.g. 6000 minutes
+  
+  userAchievements UserAchievement[]
+}
+
+// Link Users to Achievements
+model UserAchievement {
+  id            String      @id @default(uuid()) @db.Uuid
+  userId        String      @db.Uuid
+  achievementId String      @db.Uuid
+  unlockedAt    DateTime    @default(now())
+  
+  user          User        @relation(fields: [userId], references: [id])
+  achievement   Achievement @relation(fields: [achievementId], references: [id])
+
+  @@unique([userId, achievementId])
 }

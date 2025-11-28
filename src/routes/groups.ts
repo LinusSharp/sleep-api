@@ -123,4 +123,89 @@ export async function registerGroupRoutes(app: FastifyInstance) {
 
     return { success: true };
   });
+
+  // GET /groups/dashboard - Aggregated Clan Data
+  app.get("/groups/dashboard", async (request, reply) => {
+    const authReq = request as AuthenticatedRequest;
+    const user = authReq.user;
+    if (!user) return reply.status(401).send({ error: "unauthorized" });
+
+    const userData = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { groupId: true },
+    });
+
+    if (!userData?.groupId) {
+      return { isInClan: false };
+    }
+
+    const groupId = userData.groupId;
+
+    // 1. Fetch Group Details & Members
+    const group = await prisma.group.findUnique({
+      where: { id: groupId },
+      include: {
+        members: { select: { id: true, displayName: true, avatarUrl: true } },
+      },
+    });
+
+    // 2. Calculate Total Clan Sleep (All time)
+    const sleepStats = await prisma.sleepNight.aggregate({
+      where: {
+        user: { groupId: groupId },
+      },
+      _sum: {
+        totalSleepMinutes: true,
+      },
+      _count: {
+        id: true, // Count of nights logged
+      },
+    });
+
+    const totalMinutes = sleepStats._sum.totalSleepMinutes || 0;
+    const totalNights = sleepStats._count.id || 0;
+
+    // 3. Dynamic Clan Achievements (Calculated on the fly for simplicity)
+    const clanAchievements = [
+      {
+        name: "Early Risers",
+        icon: "sunny",
+        unlocked: totalNights > 10,
+        target: 10,
+        current: totalNights,
+        unit: "nights logged",
+      },
+      {
+        name: "Century Club",
+        icon: "time",
+        unlocked: totalMinutes >= 6000, // 100 hours
+        target: 6000,
+        current: totalMinutes,
+        unit: "mins total",
+      },
+      {
+        name: "Deep Sleepers",
+        icon: "bed",
+        unlocked: totalMinutes >= 30000, // 500 hours
+        target: 30000,
+        current: totalMinutes,
+        unit: "mins total",
+      },
+    ];
+
+    return {
+      isInClan: true,
+      group: {
+        id: group?.id,
+        name: group?.name,
+        code: group?.code,
+        memberCount: group?.members.length,
+      },
+      stats: {
+        totalHours: Math.round(totalMinutes / 60),
+        totalNights,
+      },
+      achievements: clanAchievements,
+    };
+  });
 }
