@@ -9,13 +9,14 @@ type LeaderboardUser = {
   displayName: string | null;
   email: string | null;
   avatarUrl: string | null;
-  points: number; // The scoring metric
-  value: number; // The raw time metric (total minutes sum)
-  nightsLogged: number; // How many nights participated
+  points: number;
+  value: number;
+  nightsLogged: number;
 };
 
 type LeaderboardQuery = {
   scope?: "friends" | "clan";
+  offset?: number; // 0 = current week, 1 = last week, etc.
 };
 
 export async function registerLeaderboardRoutes(app: FastifyInstance) {
@@ -29,15 +30,21 @@ export async function registerLeaderboardRoutes(app: FastifyInstance) {
       }
       const userId = user.id;
       const scope = request.query.scope || "friends";
+      const offset = request.query.offset ? Number(request.query.offset) : 0;
 
-      // 1. DETERMINE DATE RANGE (Mon 00:00 UTC -> Now)
+      // 1. DETERMINE DATE RANGE
+      // Logic: Find the Monday of the requested week
       const now = new Date();
       const utcDay = now.getUTCDay(); // 0 (Sun) - 6 (Sat)
       const diffToMonday = utcDay === 0 ? 6 : utcDay - 1;
 
       const startOfWeek = new Date(now);
-      startOfWeek.setUTCDate(now.getUTCDate() - diffToMonday);
+      // Go back to Monday, then go back 'offset' weeks
+      startOfWeek.setUTCDate(now.getUTCDate() - diffToMonday - offset * 7);
       startOfWeek.setUTCHours(0, 0, 0, 0);
+
+      const endOfWeek = new Date(startOfWeek);
+      endOfWeek.setUTCDate(startOfWeek.getUTCDate() + 7);
 
       // 2. IDENTIFY USERS
       let targetUserIds: string[] = [userId];
@@ -52,7 +59,7 @@ export async function registerLeaderboardRoutes(app: FastifyInstance) {
           return {
             leaderboards: {
               survivalist: [],
-              hibernator: [], // New Category
+              hibernator: [],
               tomRemmer: [],
               rollingInTheDeep: [],
             },
@@ -78,11 +85,14 @@ export async function registerLeaderboardRoutes(app: FastifyInstance) {
 
       targetUserIds = Array.from(new Set(targetUserIds));
 
-      // 3. FETCH DATA
+      // 3. FETCH DATA (Bounded by Start AND End of that week)
       const rawNights = await prisma.sleepNight.findMany({
         where: {
           userId: { in: targetUserIds },
-          date: { gte: startOfWeek },
+          date: {
+            gte: startOfWeek,
+            lt: endOfWeek, // <--- Important for "Last Week" queries
+          },
         },
       });
 
@@ -93,7 +103,6 @@ export async function registerLeaderboardRoutes(app: FastifyInstance) {
       const userMap = new Map(userDetails.map((u) => [u.id, u]));
 
       // 4. PREPARE DAILY BUCKETS
-      // We need to process each day individually to award points
       type DayStat = {
         userId: string;
         total: number;
@@ -101,11 +110,9 @@ export async function registerLeaderboardRoutes(app: FastifyInstance) {
         deep: number;
       };
 
-      // Group nights by Date String (YYYY-MM-DD)
       const nightsByDate = new Map<string, DayStat[]>();
 
       rawNights.forEach((night) => {
-        // Filter invalid nights (< 45 mins)
         if (night.totalSleepMinutes < 45) return;
 
         const dateKey = night.date.toISOString().split("T")[0];
@@ -125,7 +132,6 @@ export async function registerLeaderboardRoutes(app: FastifyInstance) {
         metricFn: (stat: DayStat) => number,
         sortAscending: boolean
       ) => {
-        // Initialize maps for aggregation
         const userPoints = new Map<string, number>();
         const userValueSum = new Map<string, number>();
         const userNightsLogged = new Map<string, number>();
@@ -136,41 +142,33 @@ export async function registerLeaderboardRoutes(app: FastifyInstance) {
           userNightsLogged.set(id, 0);
         });
 
-        // Iterate over every day that has data
         nightsByDate.forEach((stats) => {
-          // Sort the day's stats
           stats.sort((a, b) => {
             const valA = metricFn(a);
             const valB = metricFn(b);
             return sortAscending ? valA - valB : valB - valA;
           });
 
-          // Award Points for this day
           stats.forEach((stat, index) => {
             const points =
               index === 0 ? 3 : index === 1 ? 2 : index === 2 ? 1 : 0;
 
-            // Accumulate Points
             const currentPts = userPoints.get(stat.userId) || 0;
             userPoints.set(stat.userId, currentPts + points);
 
-            // Accumulate Raw Value (Time)
             const currentVal = userValueSum.get(stat.userId) || 0;
             userValueSum.set(stat.userId, currentVal + metricFn(stat));
 
-            // Accumulate Nights count
             const currentLog = userNightsLogged.get(stat.userId) || 0;
             userNightsLogged.set(stat.userId, currentLog + 1);
           });
         });
 
-        // Convert to Array & Final Sort
         const result: LeaderboardUser[] = [];
         targetUserIds.forEach((id) => {
           const u = userMap.get(id);
           const logged = userNightsLogged.get(id) || 0;
 
-          // Only include if they logged at least once
           if (logged > 0) {
             result.push({
               userId: id,
@@ -184,35 +182,19 @@ export async function registerLeaderboardRoutes(app: FastifyInstance) {
           }
         });
 
-        // Final Sort: Most Points wins. Tie-breaker: Best Total Value
         return result.sort((a, b) => {
           if (b.points !== a.points) return b.points - a.points;
-          // If tied on points, use raw value as tiebreaker
-          // For ascending (Survivalist), lower value is better
           return sortAscending ? a.value - b.value : b.value - a.value;
         });
       };
 
       // 6. GENERATE BOARDS
-
-      // Survivalist: Least Total Sleep -> Ascending
-      const survivalist = calculateBoard((s) => s.total, true);
-
-      // Hibernator: Most Total Sleep -> Descending
-      const hibernator = calculateBoard((s) => s.total, false);
-
-      // Tom REM-er: Most REM -> Descending
-      const tomRemmer = calculateBoard((s) => s.rem, false);
-
-      // Rolling in the Deep: Most Deep -> Descending
-      const rollingInTheDeep = calculateBoard((s) => s.deep, false);
-
       return {
         leaderboards: {
-          survivalist,
-          hibernator,
-          tomRemmer,
-          rollingInTheDeep,
+          survivalist: calculateBoard((s) => s.total, true),
+          hibernator: calculateBoard((s) => s.total, false),
+          tomRemmer: calculateBoard((s) => s.rem, false),
+          rollingInTheDeep: calculateBoard((s) => s.deep, false),
         },
       };
     }
