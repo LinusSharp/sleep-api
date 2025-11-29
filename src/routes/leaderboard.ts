@@ -1,5 +1,3 @@
-// --- START OF FILE leaderboard.ts ---
-
 import { FastifyInstance } from "fastify";
 import { prisma } from "../db/client";
 import type { AuthenticatedRequest } from "../server";
@@ -16,7 +14,7 @@ type LeaderboardUser = {
 
 type LeaderboardQuery = {
   scope?: "friends" | "clan";
-  offset?: number; // 0 = current week, 1 = last week, etc.
+  offset?: number;
 };
 
 export async function registerLeaderboardRoutes(app: FastifyInstance) {
@@ -32,14 +30,12 @@ export async function registerLeaderboardRoutes(app: FastifyInstance) {
       const scope = request.query.scope || "friends";
       const offset = request.query.offset ? Number(request.query.offset) : 0;
 
-      // 1. DETERMINE DATE RANGE
-      // Logic: Find the Monday of the requested week
+      // 1. DETERMINE DATE RANGE (Monday to Monday)
       const now = new Date();
       const utcDay = now.getUTCDay(); // 0 (Sun) - 6 (Sat)
       const diffToMonday = utcDay === 0 ? 6 : utcDay - 1;
 
       const startOfWeek = new Date(now);
-      // Go back to Monday, then go back 'offset' weeks
       startOfWeek.setUTCDate(now.getUTCDate() - diffToMonday - offset * 7);
       startOfWeek.setUTCHours(0, 0, 0, 0);
 
@@ -56,6 +52,7 @@ export async function registerLeaderboardRoutes(app: FastifyInstance) {
         });
 
         if (!currentUserData?.groupId) {
+          // Return empty structure if not in clan
           return {
             leaderboards: {
               survivalist: [],
@@ -85,13 +82,13 @@ export async function registerLeaderboardRoutes(app: FastifyInstance) {
 
       targetUserIds = Array.from(new Set(targetUserIds));
 
-      // 3. FETCH DATA (Bounded by Start AND End of that week)
+      // 3. FETCH DATA
       const rawNights = await prisma.sleepNight.findMany({
         where: {
           userId: { in: targetUserIds },
           date: {
             gte: startOfWeek,
-            lt: endOfWeek, // <--- Important for "Last Week" queries
+            lt: endOfWeek,
           },
         },
       });
@@ -102,7 +99,7 @@ export async function registerLeaderboardRoutes(app: FastifyInstance) {
       });
       const userMap = new Map(userDetails.map((u) => [u.id, u]));
 
-      // 4. PREPARE DAILY BUCKETS
+      // 4. PREPARE BUCKETS
       type DayStat = {
         userId: string;
         total: number;
@@ -114,11 +111,8 @@ export async function registerLeaderboardRoutes(app: FastifyInstance) {
 
       rawNights.forEach((night) => {
         if (night.totalSleepMinutes < 45) return;
-
         const dateKey = night.date.toISOString().split("T")[0];
-        if (!nightsByDate.has(dateKey)) {
-          nightsByDate.set(dateKey, []);
-        }
+        if (!nightsByDate.has(dateKey)) nightsByDate.set(dateKey, []);
         nightsByDate.get(dateKey)?.push({
           userId: night.userId,
           total: night.totalSleepMinutes,
@@ -127,7 +121,7 @@ export async function registerLeaderboardRoutes(app: FastifyInstance) {
         });
       });
 
-      // 5. HELPER TO CALCULATE POINTS
+      // 5. CALCULATE POINTS
       const calculateBoard = (
         metricFn: (stat: DayStat) => number,
         sortAscending: boolean
@@ -152,24 +146,26 @@ export async function registerLeaderboardRoutes(app: FastifyInstance) {
           stats.forEach((stat, index) => {
             const points =
               index === 0 ? 3 : index === 1 ? 2 : index === 2 ? 1 : 0;
-
-            const currentPts = userPoints.get(stat.userId) || 0;
-            userPoints.set(stat.userId, currentPts + points);
-
-            const currentVal = userValueSum.get(stat.userId) || 0;
-            userValueSum.set(stat.userId, currentVal + metricFn(stat));
-
-            const currentLog = userNightsLogged.get(stat.userId) || 0;
-            userNightsLogged.set(stat.userId, currentLog + 1);
+            userPoints.set(
+              stat.userId,
+              (userPoints.get(stat.userId) || 0) + points
+            );
+            userValueSum.set(
+              stat.userId,
+              (userValueSum.get(stat.userId) || 0) + metricFn(stat)
+            );
+            userNightsLogged.set(
+              stat.userId,
+              (userNightsLogged.get(stat.userId) || 0) + 1
+            );
           });
         });
 
         const result: LeaderboardUser[] = [];
         targetUserIds.forEach((id) => {
-          const u = userMap.get(id);
           const logged = userNightsLogged.get(id) || 0;
-
           if (logged > 0) {
+            const u = userMap.get(id);
             result.push({
               userId: id,
               displayName: u?.displayName ?? null,
@@ -182,19 +178,15 @@ export async function registerLeaderboardRoutes(app: FastifyInstance) {
           }
         });
 
-        return result.sort((a, b) => {
-          if (b.points !== a.points) return b.points - a.points;
-          return sortAscending ? a.value - b.value : b.value - a.value;
-        });
+        return result.sort((a, b) => b.points - a.points);
       };
 
-      // 6. GENERATE BOARDS
       return {
         leaderboards: {
-          survivalist: calculateBoard((s) => s.total, true),
-          hibernator: calculateBoard((s) => s.total, false),
-          tomRemmer: calculateBoard((s) => s.rem, false),
-          rollingInTheDeep: calculateBoard((s) => s.deep, false),
+          survivalist: calculateBoard((s) => s.total, true), // Least sleep
+          hibernator: calculateBoard((s) => s.total, false), // Most sleep
+          tomRemmer: calculateBoard((s) => s.rem, false), // Most REM
+          rollingInTheDeep: calculateBoard((s) => s.deep, false), // Most Deep
         },
       };
     }
