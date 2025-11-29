@@ -182,11 +182,33 @@ export async function registerGroupRoutes(app: FastifyInstance) {
     const group = await prisma.group.findUnique({
       where: { id: groupId },
       include: {
-        members: { select: { id: true } }, // We just need the count for scaling
+        // We now fetch the member details and their lastLogDate
+        members: {
+          select: {
+            id: true,
+            displayName: true,
+            avatarUrl: true,
+            lastLogDate: true, // <--- Crucial for Nudges
+          },
+        },
       },
     });
 
     const memberCount = group?.members.length || 1;
+
+    const today = new Date().setHours(0, 0, 0, 0);
+
+    const processedMembers =
+      group?.members.map((m) => {
+        const lastLog = m.lastLogDate
+          ? new Date(m.lastLogDate).setHours(0, 0, 0, 0)
+          : 0;
+        return {
+          id: m.id,
+          displayName: m.displayName || "Sleeper",
+          hasLoggedToday: lastLog === today,
+        };
+      }) || [];
 
     // 2. Calculate Stats (Added Deep Sleep)
     const sleepStats = await prisma.sleepNight.aggregate({
@@ -281,6 +303,7 @@ export async function registerGroupRoutes(app: FastifyInstance) {
         code: group?.code,
         memberCount,
       },
+      members: processedMembers,
       stats: {
         totalHours: Math.round(totalMinutes / 60),
         totalNights,
