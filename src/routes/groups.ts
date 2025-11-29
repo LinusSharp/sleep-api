@@ -2,7 +2,6 @@ import { FastifyInstance } from "fastify";
 import { prisma } from "../db/client";
 import type { AuthenticatedRequest } from "../server";
 
-// Helper to generate random 8-char alphanumeric code
 function generateGroupCode(length = 8): string {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   let result = "";
@@ -183,65 +182,96 @@ export async function registerGroupRoutes(app: FastifyInstance) {
     const group = await prisma.group.findUnique({
       where: { id: groupId },
       include: {
-        members: { select: { id: true, displayName: true, avatarUrl: true } },
+        members: { select: { id: true } }, // We just need the count for scaling
       },
     });
 
-    // 2. Calculate Total Clan Sleep (All time)
+    const memberCount = group?.members.length || 1;
+
+    // 2. Calculate Stats (Added Deep Sleep)
     const sleepStats = await prisma.sleepNight.aggregate({
       where: {
         user: { groupId: groupId },
       },
       _sum: {
         totalSleepMinutes: true,
+        deepSleepMinutes: true, // <--- Added this
       },
       _count: {
-        id: true, // Count of nights logged
+        id: true,
       },
     });
 
     const totalMinutes = sleepStats._sum.totalSleepMinutes || 0;
+    const totalDeepMinutes = sleepStats._sum.deepSleepMinutes || 0;
     const totalNights = sleepStats._count.id || 0;
 
-    // 3. Dynamic Clan Achievements
-    const clanAchievements = [
-      {
-        name: "Morning Squad",
-        description: "Log 10 nights as a team",
-        icon: "sunny",
-        unlocked: totalNights >= 10,
-        target: 10,
-        current: totalNights,
-        unit: "nights",
-      },
-      {
-        name: "Century Club",
-        description: "Clock 100 hours of total sleep",
-        icon: "time",
-        unlocked: totalMinutes >= 6000,
-        target: 6000,
-        current: totalMinutes,
-        unit: "mins",
-      },
-      {
-        name: "Deep Sleepers",
-        description: "Reach 500 hours (Master Tier)",
-        icon: "bed",
-        unlocked: totalMinutes >= 30000,
-        target: 30000,
-        current: totalMinutes,
-        unit: "mins",
-      },
-      {
-        name: "Dream Team",
-        description: "Recruit 5 members",
-        icon: "people",
-        unlocked: (group?.members.length || 0) >= 5,
-        target: 5,
-        current: group?.members.length || 0,
-        unit: "members",
-      },
+    // --- DYNAMIC SCALING LOGIC ---
+
+    // Helper to generate endless tiers
+    // baseTarget: How much ONE person should contribute to complete a tier
+    const calculateQuest = (
+      name: string,
+      description: string,
+      icon: string,
+      currentValue: number,
+      basePerMember: number,
+      unit: string
+    ) => {
+      // The target scales with clan size
+      const tierSize = basePerMember * memberCount;
+
+      // Current Tier (starts at 1)
+      const currentTier = Math.floor(currentValue / tierSize) + 1;
+
+      // Target to reach NEXT tier
+      const nextTarget = currentTier * tierSize;
+
+      return {
+        id: name.toLowerCase().replace(/\s/g, "_"),
+        name,
+        description,
+        icon,
+        tier: currentTier,
+        current: currentValue,
+        target: nextTarget,
+        unit,
+      };
+    };
+
+    // 3. Define Quests
+    const quests = [
+      calculateQuest(
+        "Morning Squad",
+        "Log nights together",
+        "sunny",
+        totalNights,
+        7, // Base: 7 nights per member per tier
+        "nights"
+      ),
+      calculateQuest(
+        "Century Club",
+        "Total sleep duration",
+        "time",
+        totalMinutes,
+        1000, // Base: 1000 mins (~16h) per member per tier
+        "mins"
+      ),
+      calculateQuest(
+        "Deep Sleepers",
+        "Accumulate Deep Sleep",
+        "bed",
+        totalDeepMinutes,
+        300, // Base: 300 mins (5h) deep sleep per member per tier
+        "mins"
+      ),
     ];
+
+    // 4. Squad Level (XP System)
+    // 1 Level = 10 nights * MemberCount
+    const levelBase = 10 * memberCount;
+    const squadLevel = Math.floor(totalNights / levelBase) + 1;
+    const nextLevelTarget = squadLevel * levelBase; // Cumulative target
 
     return {
       isInClan: true,
@@ -249,13 +279,18 @@ export async function registerGroupRoutes(app: FastifyInstance) {
         id: group?.id,
         name: group?.name,
         code: group?.code,
-        memberCount: group?.members.length,
+        memberCount,
       },
       stats: {
         totalHours: Math.round(totalMinutes / 60),
         totalNights,
       },
-      achievements: clanAchievements,
+      squadLevel: {
+        current: squadLevel,
+        progress: totalNights,
+        target: nextLevelTarget,
+      },
+      achievements: quests,
     };
   });
 }
