@@ -121,7 +121,7 @@ export async function registerLeaderboardRoutes(app: FastifyInstance) {
         });
       });
 
-      // 5. CALCULATE POINTS
+      // 5. CALCULATE POINTS (FIXED LOGIC)
       const calculateBoard = (
         metricFn: (stat: DayStat) => number,
         sortAscending: boolean
@@ -137,15 +137,41 @@ export async function registerLeaderboardRoutes(app: FastifyInstance) {
         });
 
         nightsByDate.forEach((stats) => {
+          // Sort the daily stats
           stats.sort((a, b) => {
             const valA = metricFn(a);
             const valB = metricFn(b);
             return sortAscending ? valA - valB : valB - valA;
           });
 
+          // RANKING LOGIC FIX:
+          // Instead of using index directly, we track rank.
+          // If values are equal, rank stays the same.
+          let currentRank = 1;
+
           stats.forEach((stat, index) => {
-            const points =
-              index === 0 ? 3 : index === 1 ? 2 : index === 2 ? 1 : 0;
+            // Determine Rank
+            if (index > 0) {
+              const prevStat = stats[index - 1];
+              const valCurrent = metricFn(stat);
+              const valPrev = metricFn(prevStat);
+
+              // If value is different from previous, rank skips to the current index + 1
+              // e.g. TIE 1st, TIE 1st, 3rd (not 2nd)
+              if (valCurrent !== valPrev) {
+                currentRank = index + 1;
+              }
+              // If equal, currentRank stays same as previous
+            } else {
+              currentRank = 1;
+            }
+
+            // Assign Points based on Rank
+            let points = 0;
+            if (currentRank === 1) points = 3;
+            else if (currentRank === 2) points = 2;
+            else if (currentRank === 3) points = 1;
+
             userPoints.set(
               stat.userId,
               (userPoints.get(stat.userId) || 0) + points

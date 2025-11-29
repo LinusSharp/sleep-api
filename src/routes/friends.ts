@@ -25,8 +25,11 @@ export async function registerFriendRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: "Email required" });
     }
 
+    // FIX: Normalize email to lowercase to prevent case-sensitivity issues
+    const normalizedEmail = email.trim().toLowerCase();
+
     const target = await prisma.user.findUnique({
-      where: { email },
+      where: { email: normalizedEmail },
     });
 
     if (!target) {
@@ -95,6 +98,7 @@ export async function registerFriendRoutes(app: FastifyInstance) {
 
     return { friends };
   });
+
   app.post<{ Body: RemoveFriendBody }>(
     "/friends/remove",
     async (request, reply) => {

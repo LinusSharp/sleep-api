@@ -8,6 +8,46 @@ type ProfileBody = {
   displayName?: string;
 };
 
+// --- PROFANITY FILTER LOGIC (Moved from Client) ---
+function hasProfanity(text: string): boolean {
+  if (!text) return false;
+
+  // Normalize leetspeak
+  const normalized = text
+    .toLowerCase()
+    .replace(/0/g, "o")
+    .replace(/1/g, "i")
+    .replace(/3/g, "e")
+    .replace(/4/g, "a")
+    .replace(/5/g, "s")
+    .replace(/@/g, "a")
+    .replace(/\$/g, "s")
+    .replace(/!/g, "i");
+
+  // Remove non-alpha characters to catch "b.a.d.w.o.r.d"
+  const cleanText = normalized.replace(/[^a-z]/g, "");
+
+  const badWords = [
+    "admin",
+    "staff",
+    "mod",
+    "fuck",
+    "shit",
+    "bitch",
+    "ass",
+    "cunt",
+    "dick",
+    "pussy",
+    "whore",
+    "fag",
+    "nigger",
+    "kill",
+    "suicide",
+  ];
+
+  return badWords.some((word) => cleanText.includes(word));
+}
+
 export async function registerMeRoutes(app: FastifyInstance) {
   app.post<{ Body: ProfileBody }>("/me/profile", async (request, reply) => {
     const authReq = request as AuthenticatedRequest;
@@ -20,6 +60,15 @@ export async function registerMeRoutes(app: FastifyInstance) {
 
     if (!email && !displayName) {
       return reply.status(400).send({ error: "Nothing to update" });
+    }
+
+    // --- SERVER-SIDE VALIDATION ---
+    if (displayName && hasProfanity(displayName)) {
+      return reply
+        .status(400)
+        .send({
+          error: "Display name contains restricted words or profanity.",
+        });
     }
 
     const updated = await prisma.user.upsert({
