@@ -28,6 +28,9 @@ model User {
   // --- NEW: Opposite relations added here ---
   weeklyWinners    WeeklyWinner[]
   achievements     UserAchievement[]
+
+  pushToken     String?  // <--- Add this
+  lastLogDate   DateTime? // Ensure you have this to know IF we should nudge
 }
 
 model SleepNight {
